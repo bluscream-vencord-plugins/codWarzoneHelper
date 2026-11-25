@@ -10,9 +10,21 @@ import { ChannelStore, showToast } from "@webpack/common";
 
 import { registerServer, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
 import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
+import { lookupIds } from "../tempVoiceChannels/profileScanner";
 import { isPanel, parseActivision, parseLogs } from "./parsers";
 import { PATTERNS } from "./patterns";
 import { settings } from "./settings";
+
+/** Copies the first ID and mentions the rest, since a clipboard only holds one. */
+async function copyIds(ids: string[], source: string) {
+    await copyToClipboard(ids[0]);
+    const rest = ids.slice(1);
+    showToast({
+        text: `Copied ${ids[0]}${source}${rest.length ? `. Also here: ${rest.join(", ")}` : ""}`,
+        variant: "success",
+        duration: rest.length ? 8000 : 4000
+    });
+}
 
 const server: TempVoiceServer = {
     name: "CodWarzoneHelper",
@@ -75,16 +87,16 @@ const server: TempVoiceServer = {
         api.scrollToBottom();
         if (!entries) return api.fail("The bot didn't send any Activision IDs.");
 
-        const found = entries.filter(e => others.includes(e.userId));
-        if (!found.length) return showToast({ text: "Nobody else here has linked an Activision ID." });
+        const found = entries.filter(e => others.includes(e.userId)).map(e => e.activisionId);
+        if (found.length) return copyIds(found, "");
 
-        await copyToClipboard(found[0].activisionId);
-        const rest = found.slice(1).map(e => e.activisionId);
-        showToast({
-            text: `Copied ${found[0].activisionId}${rest.length ? `. Also here: ${rest.join(", ")}` : ""}`,
-            variant: "success",
-            duration: rest.length ? 8000 : 4000
-        });
+        // Nobody here linked an ID with the bot, so try their profiles instead.
+        const guildId = settings.store.guildId;
+        for (const userId of others) {
+            const ids = await lookupIds(userId, guildId, CORE_PATTERNS.idKinds.activision);
+            if (ids.length) return copyIds(ids, " (from their profile)");
+        }
+        showToast({ text: "Nobody else here has an Activision ID linked with the bot or in their profile." });
     }
 };
 
