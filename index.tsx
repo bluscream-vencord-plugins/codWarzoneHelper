@@ -15,12 +15,15 @@ import { ActivisionEntry, isPanel, parseActivision, parseLogs } from "./parsers"
 import { PATTERNS } from "./patterns";
 import { settings } from "./settings";
 
-/** The bot's last Activision IDs reply, by channel, so the profile scan doesn't repeat them. Only the latest is kept. */
-const botIds = new Map<string, ActivisionEntry[]>();
+/**
+ * Activision IDs the bot showed, by user, for this Discord session. Each reply replaces what a user had before,
+ * since the bot's list is their current linked IDs. Used for the Copy ID menu and to keep the profile scan from repeating them.
+ */
+const botIds = new Map<string, string[]>();
 
-function rememberBotIds(channelId: string, entries: ActivisionEntry[] | null) {
-    botIds.clear();
-    if (entries) botIds.set(channelId, entries);
+function rememberBotIds(entries: ActivisionEntry[] | null) {
+    const byUser = Map.groupBy(entries ?? [], e => e.userId);
+    for (const [userId, userEntries] of byUser) botIds.set(userId, userEntries.map(e => e.activisionId));
     return entries;
 }
 
@@ -41,8 +44,8 @@ const server: TempVoiceServer = {
     botId: () => settings.store.botId,
     presets: () => settings.store.presets,
     profileIds: [CORE_PATTERNS.idKinds.activision],
-    otherIds: userId => [...botIds.values()].flat().filter(e => e.userId === userId).map(e => ({ id: e.activisionId, source: "Activision ID linked with V3NOM" })),
-    knownIds: (channelId, userId) => botIds.get(channelId)?.filter(e => e.userId === userId).map(e => e.activisionId) ?? [],
+    otherIds: userId => (botIds.get(userId) ?? []).map(id => ({ id, source: "Activision ID linked with V3NOM" })),
+    knownIds: (_channelId, userId) => botIds.get(userId) ?? [],
     isPanel: m => isPanel(m.components),
     isCreatedNotice: (m, userId) => m.content.includes(PATTERNS.createdNotice) && CORE_PATTERNS.mention(userId).test(m.content),
 
@@ -81,7 +84,7 @@ const server: TempVoiceServer = {
             await api.pause(2000, 3000);
             await api.clickButton(panel, PATTERNS.buttons.logs, parseLogs);
             await api.pause(2500, 3500);
-            rememberBotIds(channelId, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
+            rememberBotIds(await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
             await api.pause(800, 1200);
             api.scrollToBottom();
         }
@@ -93,7 +96,7 @@ const server: TempVoiceServer = {
         if (!panel) return;
         api.openChat();
         await api.pause(1500, 2500);
-        const entries = rememberBotIds(panel.channel_id, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
+        const entries = rememberBotIds(await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
         await api.pause(800, 1200);
         api.scrollToBottom();
         if (!entries) return api.fail("The bot didn't send any Activision IDs.");
