@@ -21,7 +21,8 @@ import { settings } from "./settings";
  * since the bot's list is their current linked IDs. Used for the Copy ID menu and to keep the profile scan from repeating them.
  */
 const botIds = new Map<string, string[]>();
-const BOT_SOURCE = "Activision ID linked with V3NOM";
+/** Where these IDs came from, as shown in the Copy ID menu. */
+const BOT_SOURCE = "V3NOM bot";
 
 function rememberBotIds(entries: ActivisionEntry[] | null) {
     const byUser = Map.groupBy(entries ?? [], e => e.userId);
