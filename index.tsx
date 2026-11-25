@@ -10,6 +10,7 @@ import { ChannelStore, showToast } from "@webpack/common";
 
 import { registerServer, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
 import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
+import { rememberIds } from "../tempVoiceChannels/idStore";
 import { lookupIds } from "../tempVoiceChannels/profileScanner";
 import { ActivisionEntry, isPanel, parseActivision, parseLogs } from "./parsers";
 import { PATTERNS } from "./patterns";
@@ -20,10 +21,15 @@ import { settings } from "./settings";
  * since the bot's list is their current linked IDs. Used for the Copy ID menu and to keep the profile scan from repeating them.
  */
 const botIds = new Map<string, string[]>();
+const BOT_SOURCE = "Activision ID linked with V3NOM";
 
 function rememberBotIds(entries: ActivisionEntry[] | null) {
     const byUser = Map.groupBy(entries ?? [], e => e.userId);
-    for (const [userId, userEntries] of byUser) botIds.set(userId, userEntries.map(e => e.activisionId));
+    for (const [userId, userEntries] of byUser) {
+        const ids = userEntries.map(e => e.activisionId);
+        botIds.set(userId, ids);
+        rememberIds(userId, ids.map(id => ({ id, source: BOT_SOURCE })));
+    }
     return entries;
 }
 
@@ -44,7 +50,7 @@ const server: TempVoiceServer = {
     botId: () => settings.store.botId,
     presets: () => settings.store.presets,
     profileIds: [CORE_PATTERNS.idKinds.activision],
-    otherIds: userId => (botIds.get(userId) ?? []).map(id => ({ id, source: "Activision ID linked with V3NOM" })),
+    otherIds: userId => (botIds.get(userId) ?? []).map(id => ({ id, source: BOT_SOURCE })),
     knownIds: (_channelId, userId) => botIds.get(userId) ?? [],
     isPanel: m => isPanel(m.components),
     isCreatedNotice: (m, userId) => m.content.includes(PATTERNS.createdNotice) && CORE_PATTERNS.mention(userId).test(m.content),
