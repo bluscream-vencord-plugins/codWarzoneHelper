@@ -5,44 +5,87 @@
  */
 
 import { copyToClipboard } from "@utils/clipboard";
+import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
-import { ChannelStore, showToast } from "@webpack/common";
+import { ChannelStore, showToast, UserStore, VoiceStateStore } from "@webpack/common";
 
-import { registerServer, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
-import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
+import { registerServer, TempVoiceApi, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
 import { rememberIds } from "../tempVoiceChannels/idStore";
+import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
 import { lookupIds } from "../tempVoiceChannels/profileScanner";
 import { ActivisionEntry, isPanel, parseActivision, parseLogs } from "./parsers";
 import { PATTERNS } from "./patterns";
 import { settings } from "./settings";
 
-/**
- * Activision IDs the bot showed, by user, for this Discord session. Each reply replaces what a user had before,
- * since the bot's list is their current linked IDs. Used for the Copy ID menu and to keep the profile scan from repeating them.
- */
-const botIds = new Map<string, string[]>();
+const logger = new Logger("CodWarzoneHelper");
+
 /** Where these IDs came from, as shown in the Copy ID menu. */
 const BOT_SOURCE = "V3NOM bot";
 
-function rememberBotIds(entries: ActivisionEntry[] | null) {
-    const byUser = Map.groupBy(entries ?? [], e => e.userId);
-    for (const [userId, userEntries] of byUser) {
+/**
+ * Activision IDs the bot showed, by user, for this Discord session. Each reply replaces what a user had before,
+ * since the bot's list is their current linked IDs. Used for the Copy ID menu.
+ */
+const botIds = new Map<string, string[]>();
+/** The same, by the channel the bot showed them in, so the profile scan only leaves out what you saw there. */
+const shownIn = new Map<string, Map<string, string[]>>();
+
+function rememberBotIds(channelId: string, entries: ActivisionEntry[] | null) {
+    const shown = new Map<string, string[]>();
+    for (const [userId, userEntries] of Map.groupBy(entries ?? [], e => e.userId)) {
         const ids = userEntries.map(e => e.activisionId);
         botIds.set(userId, ids);
+        shown.set(userId, ids);
         rememberIds(userId, ids.map(id => ({ id, source: BOT_SOURCE })));
     }
+    shownIn.clear();
+    shownIn.set(channelId, shown);
     return entries;
 }
 
+interface FoundId {
+    userId: string;
+    id: string;
+}
+
+const displayName = (userId: string) => {
+    const user = UserStore.getUser(userId);
+    return user?.globalName ?? user?.username ?? "someone";
+};
+
 /** Copies the first ID and mentions the rest, since a clipboard only holds one. */
-async function copyIds(ids: string[], source: string) {
-    await copyToClipboard(ids[0]);
-    const rest = ids.slice(1);
+async function copyIds(found: FoundId[], fromProfile: boolean) {
+    const unique = [...new Map(found.map(f => [f.id.toLowerCase(), f])).values()];
+    const [first, ...rest] = unique;
+    try {
+        await copyToClipboard(first.id);
+    } catch (err) {
+        logger.error("Copying to the clipboard failed", err);
+        return showToast({ text: `Couldn't copy ${first.id} to the clipboard.`, variant: "critical" });
+    }
+    const also = rest.map(f => `${f.id} (${displayName(f.userId)})`).join(", ");
     showToast({
-        text: `Copied ${ids[0]}${source}${rest.length ? `. Also here: ${rest.join(", ")}` : ""}`,
+        text: `Copied ${first.id} of ${displayName(first.userId)}${fromProfile ? " from their profile" : ""}${also ? `. Also here: ${also}` : ""}`,
         variant: "success",
         duration: rest.length ? 8000 : 4000
     });
+}
+
+/** Everyone else still in the channel, in the order they were found when you joined. */
+function stillHere(channelId: string, others: string[]) {
+    const present = VoiceStateStore.getVoiceStatesForChannel(channelId);
+    return others.filter(userId => userId in present);
+}
+
+/** Nobody here linked an ID with the bot, or it didn't answer: try their profiles instead, one at a time. */
+async function copyFromProfiles(api: TempVoiceApi, channelId: string, others: string[]) {
+    const { guildId } = settings.store;
+    for (const userId of stillHere(channelId, others)) {
+        const ids = await lookupIds(userId, guildId, CORE_PATTERNS.idKinds.activision);
+        if (ids.length) return copyIds(ids.map(id => ({ userId, id })), true);
+        await api.pause(800, 1500);
+    }
+    showToast({ text: "Nobody else here has an Activision ID linked with the bot or in their profile." });
 }
 
 const server: TempVoiceServer = {
@@ -52,7 +95,7 @@ const server: TempVoiceServer = {
     presets: () => settings.store.presets,
     profileIds: [CORE_PATTERNS.idKinds.activision],
     otherIds: userId => (botIds.get(userId) ?? []).map(id => ({ id, source: BOT_SOURCE })),
-    knownIds: (_channelId, userId) => botIds.get(userId) ?? [],
+    knownIds: (channelId, userId) => shownIn.get(channelId)?.get(userId) ?? [],
     isPanel: m => isPanel(m.components),
     isCreatedNotice: (m, userId) => m.content.includes(PATTERNS.createdNotice) && CORE_PATTERNS.mention(userId).test(m.content),
 
@@ -62,14 +105,15 @@ const server: TempVoiceServer = {
         const panel = await api.waitForPanel();
         if (!panel) return api.fail("Voice panel not found.");
 
-        // The bot's rename form also sets the channel status. With only a status, the name stays as it is,
-        // so the check passes as soon as the form was sent.
+        // The bot's rename form also sets the channel status. Without a preset name the name field keeps the bot's
+        // prefilled value, so the channel isn't renamed to itself; then there's no name to check, sending the form is enough.
         if (preset.name || preset.status) {
-            const name = (preset.name || ChannelStore.getChannel(channelId)?.name || "").trim();
+            const name = preset.name.trim();
+            const { rename } = PATTERNS.modals;
             await api.pause(1500, 2500);
-            const renamed = await api.submitModal(panel, PATTERNS.buttons.rename, PATTERNS.modals.rename.id,
-                { [PATTERNS.modals.rename.name]: name, [PATTERNS.modals.rename.status]: preset.status },
-                () => ChannelStore.getChannel(channelId)?.name.trim() === name, "Rename");
+            const renamed = await api.submitModal(panel, PATTERNS.buttons.rename, rename.id,
+                { ...(name ? { [rename.name]: name } : {}), [rename.status]: preset.status },
+                () => !name || ChannelStore.getChannel(channelId)?.name.trim() === name, "Rename");
             if (!renamed) return;
         }
 
@@ -91,33 +135,27 @@ const server: TempVoiceServer = {
             await api.pause(2000, 3000);
             await api.clickButton(panel, PATTERNS.buttons.logs, parseLogs);
             await api.pause(2500, 3500);
-            rememberBotIds(await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
+            rememberBotIds(channelId, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
             await api.pause(800, 1200);
             api.scrollToBottom();
         }
     },
 
-    async onJoinOthers(api, _channelId, others) {
+    async onJoinOthers(api, channelId, others) {
         if (!settings.store.copyActivisionOnJoin) return;
         const panel = await api.waitForPanel();
-        if (!panel) return;
+        if (!panel) return copyFromProfiles(api, channelId, others);
         api.openChat();
         await api.pause(1500, 2500);
-        const entries = rememberBotIds(await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
+        const entries = rememberBotIds(channelId, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
         await api.pause(800, 1200);
         api.scrollToBottom();
-        if (!entries) return api.fail("The bot didn't send any Activision IDs.");
 
-        const found = entries.filter(e => others.includes(e.userId)).map(e => e.activisionId);
-        if (found.length) return copyIds(found, "");
-
-        // Nobody here linked an ID with the bot, so try their profiles instead.
-        const guildId = settings.store.guildId;
-        for (const userId of others) {
-            const ids = await lookupIds(userId, guildId, CORE_PATTERNS.idKinds.activision);
-            if (ids.length) return copyIds(ids, " (from their profile)");
-        }
-        showToast({ text: "Nobody else here has an Activision ID linked with the bot or in their profile." });
+        const here = stillHere(channelId, others);
+        const found = (entries ?? []).filter(e => here.includes(e.userId)).map(e => ({ userId: e.userId, id: e.activisionId }));
+        if (found.length) return copyIds(found, false);
+        if (!entries) showToast({ text: "The bot didn't send any Activision IDs, trying their profiles." });
+        await copyFromProfiles(api, channelId, others);
     }
 };
 
@@ -138,5 +176,7 @@ export default definePlugin({
 
     stop() {
         unregisterServer(server.name);
+        botIds.clear();
+        shownIn.clear();
     }
 });

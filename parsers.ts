@@ -5,8 +5,6 @@
  */
 
 import { findComponent, getText } from "../tempVoiceChannels/components";
-import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
-import { findIds } from "../tempVoiceChannels/profileScanner";
 import { PATTERNS } from "./patterns";
 
 export function isPanel(components: unknown[] | undefined) {
@@ -42,13 +40,13 @@ export interface ActivisionEntry {
 }
 
 /**
- * One entry per ID. A user's block can hold several IDs ("Yami#7128746 Yami2#7128345"), which are split with the same
- * recognition the profile scanner uses; a block it can't read (e.g. an old name without a number) is kept as it is.
+ * One entry per ID. The bot's list is what people linked themselves, so it's trusted as written: a block holding
+ * several IDs ("Yami#7128746 Yami2#7128345") is only split after each "#number", names with spaces or unusual
+ * characters stay whole, and an old name without a number is kept too. Empty blocks are dropped.
  */
 export function parseActivision(components: unknown[] | undefined): ActivisionEntry[] | null {
     if (!findComponent(components, PATTERNS.buttons.editGamertag)) return null;
-    return [...getText(components).matchAll(PATTERNS.activisionEntry)].flatMap(([, userId, block]) => {
-        const ids = findIds(block, CORE_PATTERNS.idKinds.activision);
-        return (ids.length ? ids : [block.trim()]).map(activisionId => ({ userId, activisionId }));
-    });
+    return [...getText(components).matchAll(PATTERNS.activisionEntry)].flatMap(([, userId, block]) =>
+        block.split(PATTERNS.activisionBlockSplit).map(id => id.trim()).filter(Boolean).map(activisionId => ({ userId, activisionId }))
+    );
 }

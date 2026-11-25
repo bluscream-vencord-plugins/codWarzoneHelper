@@ -8,20 +8,21 @@ import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 
 import { Preset, serverSettings } from "../tempVoiceChannels/presets";
+import { PATTERNS } from "./patterns";
 
 const PRESET_KEYS: ["presets"] = ["presets"];
 
 export const settings = definePluginSettings({
     ...serverSettings({
-        defaultGuildId: "500074231544152074",
-        defaultBotId: "1515388147759059015",
+        defaultGuildId: PATTERNS.defaults.guildId,
+        defaultBotId: PATTERNS.defaults.botId,
         guildId: (): string => settings.store.guildId,
         fields: { name: true, limit: true, privacy: true },
         description: "Each preset joins a create channel, waits for the bot to move you, then renames the new channel and sets its status, user limit and visibility.",
         usePresets: (): Preset[] => settings.use(PRESET_KEYS).presets,
         savePresets: presets => settings.store.presets = presets,
         defaultPresets: [
-            { id: "rebirth-casual", name: "Rebirth Casual", status: "Casual Rebirth, jeder willkommen", creatorId: "1075199439704170516", limit: 0, privacy: "unchanged" }
+            { id: "rebirth-casual", name: "Rebirth Casual", status: "Casual Rebirth, jeder willkommen", creatorId: PATTERNS.defaults.creatorId, limit: 0, privacy: "unchanged" }
         ]
     }),
     clickPanelOnCreate: {
@@ -31,7 +32,7 @@ export const settings = definePluginSettings({
     },
     copyActivisionOnJoin: {
         type: OptionType.BOOLEAN,
-        description: "When you join someone else's channel and others are in it, fetch their Activision IDs and copy the first one to your clipboard.",
+        description: "When you join someone else's channel and others are in it, fetch their Activision IDs from the bot, or from their profiles if nobody linked one, and copy the first one to your clipboard.",
         default: true
     }
 });
