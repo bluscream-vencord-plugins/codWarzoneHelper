@@ -90,7 +90,11 @@ const server: TempVoiceServer = {
 export default definePlugin({
     name: "CodWarzoneHelper",
     description: "Creates preset voice channels on the German Warzone & MW4 server and handles the V3NOM voice panel for you.",
-    authors: [{ name: "Bluscream", id: 467777925790564352n }],
+    authors: [
+        { name: "Bluscream", id: 467777925790564352n },
+        { name: "Claude Opus 5.5", id: 0n },
+        { name: "Claude Fable 5.2", id: 0n }
+    ],
     dependencies: ["TempVoiceChannels"],
     settings,
 
