@@ -11,9 +11,18 @@ import { ChannelStore, showToast } from "@webpack/common";
 import { registerServer, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
 import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
 import { lookupIds } from "../tempVoiceChannels/profileScanner";
-import { isPanel, parseActivision, parseLogs } from "./parsers";
+import { ActivisionEntry, isPanel, parseActivision, parseLogs } from "./parsers";
 import { PATTERNS } from "./patterns";
 import { settings } from "./settings";
+
+/** The bot's last Activision IDs reply, by channel, so the profile scan doesn't repeat them. Only the latest is kept. */
+const botIds = new Map<string, ActivisionEntry[]>();
+
+function rememberBotIds(channelId: string, entries: ActivisionEntry[] | null) {
+    botIds.clear();
+    if (entries) botIds.set(channelId, entries);
+    return entries;
+}
 
 /** Copies the first ID and mentions the rest, since a clipboard only holds one. */
 async function copyIds(ids: string[], source: string) {
@@ -32,6 +41,7 @@ const server: TempVoiceServer = {
     botId: () => settings.store.botId,
     presets: () => settings.store.presets,
     profileIds: [CORE_PATTERNS.idKinds.activision],
+    knownIds: (channelId, userId) => botIds.get(channelId)?.filter(e => e.userId === userId).map(e => e.activisionId) ?? [],
     isPanel: m => isPanel(m.components),
     isCreatedNotice: (m, userId) => m.content.includes(PATTERNS.createdNotice) && CORE_PATTERNS.mention(userId).test(m.content),
 
@@ -70,7 +80,7 @@ const server: TempVoiceServer = {
             await api.pause(2000, 3000);
             await api.clickButton(panel, PATTERNS.buttons.logs, parseLogs);
             await api.pause(2500, 3500);
-            await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision);
+            rememberBotIds(channelId, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
             await api.pause(800, 1200);
             api.scrollToBottom();
         }
@@ -82,7 +92,7 @@ const server: TempVoiceServer = {
         if (!panel) return;
         api.openChat();
         await api.pause(1500, 2500);
-        const entries = await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision);
+        const entries = rememberBotIds(panel.channel_id, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
         await api.pause(800, 1200);
         api.scrollToBottom();
         if (!entries) return api.fail("The bot didn't send any Activision IDs.");
