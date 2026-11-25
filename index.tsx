@@ -41,6 +41,7 @@ const server: TempVoiceServer = {
     botId: () => settings.store.botId,
     presets: () => settings.store.presets,
     profileIds: [CORE_PATTERNS.idKinds.activision],
+    otherIds: userId => [...botIds.values()].flat().filter(e => e.userId === userId).map(e => ({ id: e.activisionId, source: "Activision ID linked with V3NOM" })),
     knownIds: (channelId, userId) => botIds.get(channelId)?.filter(e => e.userId === userId).map(e => e.activisionId) ?? [],
     isPanel: m => isPanel(m.components),
     isCreatedNotice: (m, userId) => m.content.includes(PATTERNS.createdNotice) && CORE_PATTERNS.mention(userId).test(m.content),
