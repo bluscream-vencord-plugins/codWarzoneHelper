@@ -6,6 +6,10 @@
 
 /** Everything this plugin matches in V3NOM's messages, buttons and forms. */
 export const PATTERNS = {
+    /** Discord's permission overwrite type for a single member (0 is a role). */
+    memberOverwrite: 1,
+    /** How long to wait for the bot to make a channel public before giving up. */
+    publicTimeoutMs: 5000,
     /** Defaults for the hidden settings and the example preset. */
     defaults: {
         /** ⭐ Call of Duty: Warzone & MW4 | Deutschland */

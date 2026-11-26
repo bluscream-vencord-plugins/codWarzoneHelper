@@ -88,6 +88,13 @@ async function copyFromProfiles(api: TempVoiceApi, channelId: string, others: st
     showToast({ text: "Nobody else here has an Activision ID linked with the bot or in their profile." });
 }
 
+/** Private: the bot takes away everyone's permission to see or join the channel. */
+function isClosed(channelId: string) {
+    const channel = ChannelStore.getChannel(channelId);
+    const everyone = channel?.permissionOverwrites[channel.guild_id];
+    return everyone ? (everyone.deny & (PermissionsBits.CONNECT | PermissionsBits.VIEW_CHANNEL)) !== 0n : false;
+}
+
 const server: TempVoiceServer = {
     name: "CodWarzoneHelper",
     guildId: () => settings.store.guildId,
@@ -141,29 +148,37 @@ const server: TempVoiceServer = {
         }
     },
 
-    // The bot doesn't let its owner back into a private or full channel, so open it up and make room before leaving.
-    async beforeLeaveOwn(api, channelId) {
-        const channel = ChannelStore.getChannel(channelId);
-        if (!channel) return;
-        const people = Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId)).length;
-        const tooSmall = channel.userLimit > 0 && channel.userLimit < people;
-        const everyone = channel.permissionOverwrites[channel.guild_id];
-        const closed = everyone ? (everyone.deny & (PermissionsBits.CONNECT | PermissionsBits.VIEW_CHANNEL)) !== 0n : false;
-        if (!tooSmall && !closed) return;
+    // The bot gives a channel's owner their own permission to connect, and moves it along when the channel is transferred.
+    // The bot gives only a channel's owner their own permission to connect, and moves it along when the channel is transferred.
+    isOwner: (channel, userId) => {
+        const owners = Object.values(channel.permissionOverwrites)
+            .filter(o => o.type === PATTERNS.memberOverwrite && (o.allow & PermissionsBits.CONNECT) !== 0n);
+        return owners.length === 1 && owners[0].id === userId;
+    },
 
-        const panel = await api.waitForPanel();
-        if (!panel) return api.fail("Couldn't find the voice panel, so your channel may not let you back in.");
-        if (tooSmall) {
-            const raised = await api.submitModal(panel, PATTERNS.buttons.limit, PATTERNS.modals.limit.id,
-                { [PATTERNS.modals.limit.limit]: String(people) },
-                () => (ChannelStore.getChannel(channelId)?.userLimit ?? 0) >= people, "Raising the user limit");
-            if (!raised) return;
-            if (closed) await api.pause(1500, 2500);
-        }
-        if (closed) {
+    // The bot doesn't let its owner back into a private or full channel, so open it up and make room before leaving.
+    // Alone, the channel is deleted once you leave, so there's nothing to keep.
+    prepareLeave(channel) {
+        const people = Object.keys(VoiceStateStore.getVoiceStatesForChannel(channel.id)).length;
+        const tooSmall = channel.userLimit > 0 && channel.userLimit < people;
+        if (people <= 1 || (!tooSmall && !isClosed(channel.id))) return null;
+
+        return async api => {
+            const panel = await api.waitForPanel();
+            if (!panel) return api.fail("Couldn't find the voice panel, so your channel may not let you back in.");
+            if (tooSmall) {
+                const raised = await api.submitModal(panel, PATTERNS.buttons.limit, PATTERNS.modals.limit.id,
+                    { [PATTERNS.modals.limit.limit]: String(people) },
+                    () => (ChannelStore.getChannel(channel.id)?.userLimit ?? 0) >= people, "Raising the user limit");
+                if (!raised) return;
+            }
+            if (!isClosed(channel.id)) return;
+            if (tooSmall) await api.pause(1500, 2500);
             await api.clickButton(panel, PATTERNS.buttons.public);
-            await api.pause(1000, 1500);
-        }
+            if (await api.waitUntil(() => !isClosed(channel.id), PATTERNS.publicTimeoutMs))
+                showToast({ text: "Your channel is now public, so you can get back in." });
+            else api.fail("Making your channel public didn't go through, so it may not let you back in.");
+        };
     },
 
     async onJoinOthers(api, channelId, others) {
