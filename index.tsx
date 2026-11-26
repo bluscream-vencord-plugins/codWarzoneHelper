@@ -119,7 +119,7 @@ const server: TempVoiceServer = {
 
         if (preset.limit) {
             const { limit } = preset;
-            await api.pause(1500, 2500);
+            await api.pause(3000, 3500);
             const limited = await api.submitModal(panel, PATTERNS.buttons.limit, PATTERNS.modals.limit.id,
                 { [PATTERNS.modals.limit.limit]: String(limit) },
                 () => ChannelStore.getChannel(channelId)?.userLimit === limit, "Setting the user limit");
