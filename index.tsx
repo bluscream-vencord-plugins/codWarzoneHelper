@@ -6,7 +6,7 @@
 
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
-import { ChannelStore, showToast, UserStore, VoiceStateStore } from "@webpack/common";
+import { ChannelStore, PermissionsBits, showToast, UserStore, VoiceStateStore } from "@webpack/common";
 
 import { registerServer, TempVoiceApi, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
 import { copyText } from "../tempVoiceChannels/clipboard";
@@ -138,6 +138,31 @@ const server: TempVoiceServer = {
             rememberBotIds(channelId, await api.clickButton(panel, PATTERNS.buttons.activision, parseActivision));
             await api.pause(800, 1200);
             api.scrollToBottom();
+        }
+    },
+
+    // The bot doesn't let its owner back into a private or full channel, so open it up and make room before leaving.
+    async beforeLeaveOwn(api, channelId) {
+        const channel = ChannelStore.getChannel(channelId);
+        if (!channel) return;
+        const people = Object.keys(VoiceStateStore.getVoiceStatesForChannel(channelId)).length;
+        const tooSmall = channel.userLimit > 0 && channel.userLimit < people;
+        const everyone = channel.permissionOverwrites[channel.guild_id];
+        const closed = everyone ? (everyone.deny & (PermissionsBits.CONNECT | PermissionsBits.VIEW_CHANNEL)) !== 0n : false;
+        if (!tooSmall && !closed) return;
+
+        const panel = await api.waitForPanel();
+        if (!panel) return api.fail("Couldn't find the voice panel, so your channel may not let you back in.");
+        if (tooSmall) {
+            const raised = await api.submitModal(panel, PATTERNS.buttons.limit, PATTERNS.modals.limit.id,
+                { [PATTERNS.modals.limit.limit]: String(people) },
+                () => (ChannelStore.getChannel(channelId)?.userLimit ?? 0) >= people, "Raising the user limit");
+            if (!raised) return;
+            if (closed) await api.pause(1500, 2500);
+        }
+        if (closed) {
+            await api.clickButton(panel, PATTERNS.buttons.public);
+            await api.pause(1000, 1500);
         }
     },
 
