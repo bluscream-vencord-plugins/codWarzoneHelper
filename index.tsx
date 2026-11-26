@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { copyToClipboard } from "@utils/clipboard";
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
 import { ChannelStore, showToast, UserStore, VoiceStateStore } from "@webpack/common";
 
 import { registerServer, TempVoiceApi, TempVoiceServer, unregisterServer } from "../tempVoiceChannels";
+import { copyText } from "../tempVoiceChannels/clipboard";
 import { rememberIds } from "../tempVoiceChannels/idStore";
 import { PATTERNS as CORE_PATTERNS } from "../tempVoiceChannels/patterns";
 import { lookupIds } from "../tempVoiceChannels/profileScanner";
@@ -58,7 +58,7 @@ async function copyIds(found: FoundId[], fromProfile: boolean) {
     const unique = [...new Map(found.map(f => [f.id.toLowerCase(), f])).values()];
     const [first, ...rest] = unique;
     try {
-        await copyToClipboard(first.id);
+        await copyText(first.id);
     } catch (err) {
         logger.error("Copying to the clipboard failed", err);
         return showToast({ text: `Couldn't copy ${first.id} to the clipboard.`, variant: "critical" });
